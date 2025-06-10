@@ -9,7 +9,7 @@
 */
 
 #include <NimBLEDevice.h>
-
+#include "nimconfig.h"
 void scanEndedCB(NimBLEScanResults results);
 
 static NimBLEAdvertisedDevice* advDevice;
@@ -58,11 +58,10 @@ class ClientCallbacks : public NimBLEClientCallbacks {
 
     /********************* Security handled here **********************
     ****** Note: these are the same return values as defaults ********/
-    uint32_t onPassKeyRequest(){
-        Serial.println("Client Passkey Request");
-        /** return the passkey to send to the server */
-        return 123456;
-    };
+    uint32_t onPassKeyRequest() override {
+      Serial.println("Client Passkey Request");
+      return 1234;           // ← was 123456
+    }
 
     bool onConfirmPIN(uint32_t pass_key){
         Serial.print("The passkey YES/NO number: ");
@@ -84,22 +83,21 @@ class ClientCallbacks : public NimBLEClientCallbacks {
 
 
 /** Define a class to handle the callbacks when advertisments are received */
-class AdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
-
-    void onResult(NimBLEAdvertisedDevice* advertisedDevice) {
+class AdvertisedDeviceCallbacks : public NimBLEAdvertisedDeviceCallbacks {
+    void onResult(NimBLEAdvertisedDevice* advertisedDevice) override {
         Serial.print("Advertised Device found: ");
         Serial.println(advertisedDevice->toString().c_str());
-        if(advertisedDevice->isAdvertisingService(NimBLEUUID("DEAD")))
-        {
-            Serial.println("Found Our Service");
-            /** stop scan before connecting */
-            NimBLEDevice::getScan()->stop();
-            /** Save the device reference in a global for the client to use*/
-            advDevice = advertisedDevice;
-            /** Ready to connect now */
-            doConnect = true;
+
+        /* ❶  Match by name **or** by service UUID */
+        if (advertisedDevice->getName() == "OBDII" ||
+            advertisedDevice->isAdvertisingService(NimBLEUUID((uint16_t)0xFFF0))) {
+
+            Serial.println("Found OBD-II dongle – stopping scan");
+            NimBLEDevice::getScan()->stop();            // halt scanner
+            advDevice = advertisedDevice;               // remember who to connect to
+            doConnect = true;                           // trigger connect in loop()
         }
-    };
+    }
 };
 
 
@@ -168,9 +166,9 @@ bool connectToServer() {
          *  connections. Timeout should be a multiple of the interval, minimum is 100ms.
          *  Min interval: 12 * 1.25ms = 15, Max interval: 12 * 1.25ms = 15, 0 latency, 51 * 10ms = 510ms timeout
          */
-        pClient->setConnectionParams(12,12,0,51);
+        pClient->setConnectionParams(24,40,0,200);
         /** Set how long we are willing to wait for the connection to complete (seconds), default is 30. */
-        pClient->setConnectTimeout(5);
+        pClient->setConnectTimeout(15);
 
 
         if (!pClient->connect(advDevice)) {
@@ -329,13 +327,14 @@ void setup (){
     Serial.println("Starting NimBLE Client");
     /** Initialize NimBLE, no device name spcified as we are not advertising */
     NimBLEDevice::init("");
+    NimBLEDevice::setSecurityPasskey(1234); 
 
     /** Set the IO capabilities of the device, each option will trigger a different pairing method.
      *  BLE_HS_IO_KEYBOARD_ONLY    - Passkey pairing
      *  BLE_HS_IO_DISPLAY_YESNO   - Numeric comparison pairing
      *  BLE_HS_IO_NO_INPUT_OUTPUT - DEFAULT setting - just works pairing
      */
-    //NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_ONLY); // use passkey
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT); // use passkey
     //NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_YESNO); //use numeric comparison
 
     /** 2 different ways to set security - both calls achieve the same result.
@@ -343,8 +342,8 @@ void setup (){
      *
      *  These are the default values, only shown here for demonstration.
      */
-    //NimBLEDevice::setSecurityAuth(false, false, true);
-    NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
+    NimBLEDevice::setSecurityAuth(true, false, false);
+    //NimBLEDevice::setSecurityAuth(BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM | BLE_SM_PAIR_AUTHREQ_SC);
 
     /** Optional: set the transmit power, default is 3db */
     NimBLEDevice::setPower(ESP_PWR_LVL_P9); /** +9db */
@@ -373,20 +372,43 @@ void setup (){
 }
 
 
-void loop (){
-    /** Loop here until we find a device we want to connect to */
-    while(!doConnect){
+void loop() {
+
+    /* Wait until the scanner has found our dongle and set doConnect = true */
+    if (!doConnect) {
         delay(1);
+        return;
     }
 
-    doConnect = false;
+    doConnect = false;                    // we’re taking charge now
 
-    /** Found a device we want to connect to, do it now */
-    if(connectToServer()) {
-        Serial.println("Success! we should now be getting notifications, scanning for more!");
-    } else {
-        Serial.println("Failed to connect, starting scan");
+    /* REPEAT until connectToServer() returns true
+     * – if the dongle vanishes we break and restart the scanner          */
+    const uint8_t   maxQuickRetries = 5;  // how many rapid retries before new scan
+    const uint16_t  retryDelayMs    = 300;
+
+    uint8_t tries = 0;
+    while (!connectToServer()) {
+
+        ++tries;
+        Serial.printf("Connect attempt %u failed – retrying…\n", tries);
+
+        /* If the adapter has stopped advertising (car off, Bluetooth clash…)
+         * the next fast retry would just fail instantly.
+         * After a few attempts, fall back to a fresh scan so we rediscover it.
+        if (tries >= maxQuickRetries) {
+            Serial.println("Too many quick retries – restarting scan");
+            NimBLEDevice::getScan()->start(scanTime, scanEndedCB);
+            return;                       // go back to waiting for doConnect
+        }*/
+
+        delay(retryDelayMs);              // short back-off before next try
     }
 
-    NimBLEDevice::getScan()->start(scanTime,scanEndedCB);
+    //--------------------------------------------------------
+    // We arrive here only when connectToServer() succeeded
+    //--------------------------------------------------------
+    Serial.println("Success!  We should now be getting notifications.");
+    /* If the link drops later, onDisconnect() will restart the scan
+       and the whole process begins again automatically. */
 }
