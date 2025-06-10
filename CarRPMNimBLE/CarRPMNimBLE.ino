@@ -45,11 +45,16 @@ class ClientCB : public NimBLEClientCallbacks {
 
 // —————————————————————————————
 // Scan callbacks
+// in ScanCB:
 class ScanCB : public NimBLEAdvertisedDeviceCallbacks {
   void onResult(NimBLEAdvertisedDevice* dev) override {
-    // look for our FFF0 service UUID
-    if(dev->isAdvertisingService(NimBLEUUID(SERVICE_UUID))) {
-      tft.println("Found OBD-II (FFF0), stopping scan.");
+    bool hasFFF0 = dev->isAdvertisingService(NimBLEUUID(SERVICE_UUID));
+    bool canConn  = dev->isConnectable();
+    Serial.printf("Adv: %s  RSSI=%d  FFF0=%d  Conn=%d\n",
+                  dev->getAddress().toString().c_str(),
+                  dev->getRSSI(), hasFFF0, canConn);
+    if(hasFFF0 && canConn) {
+      tft.println("Found connectable OBD-II!");
       NimBLEDevice::getScan()->stop();
       connectToOBD(dev);
     }
@@ -104,12 +109,15 @@ void loop() {
 // —————————————————————————————
 // SCAN
 void scanForOBD() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setCursor(10,10);
   tft.println("Scanning for BLE OBD-II…");
+
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setAdvertisedDeviceCallbacks(new ScanCB());
-  scan->setActiveScan(true);
-  scan->setInterval(160);  // 100 ms
-  scan->setWindow(160);    // 100 ms
+  scan->setActiveScan(false);        // ← passive scan only
+  scan->setInterval(160);
+  scan->setWindow(160);
   scan->start(0, nullptr);
 }
 
@@ -117,12 +125,17 @@ void scanForOBD() {
 // CONNECT + DISCOVER
 void connectToOBD(NimBLEAdvertisedDevice* dev) {
   tft.printf("Connecting to %s …\n", dev->getAddress().toString().c_str());
+
   pClient = NimBLEDevice::createClient();
   pClient->setClientCallbacks(new ClientCB(), false);
 
-  if(!pClient->connect(dev)) {
-    tft.println("GATT connect() failed");
-    scanForOBD();
+  // try to establish GATT connection
+  if (!pClient->connect(dev)) {
+    // no more getConnInfo()/status here
+    tft.printf("GATT connect() failed\n");
+    Serial.println("Connect() failed");
+    delay(1000);
+    scanForOBD();  
     return;
   }
 
