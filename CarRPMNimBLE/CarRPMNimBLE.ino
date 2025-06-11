@@ -173,7 +173,7 @@ bool connectToServer() {
 
         if (!pClient->connect(advDevice)) {
             /** Created a client but failed to connect, don't need to keep it as it has no data */
-            NimBLEDevice::deleteClient(pClient);
+            //NimBLEDevice::deleteClient(pClient);
             Serial.println("Failed to connect, deleted client");
             return false;
         }
@@ -385,7 +385,7 @@ void loop() {
     /* REPEAT until connectToServer() returns true
      * – if the dongle vanishes we break and restart the scanner          */
     const uint8_t   maxQuickRetries = 5;  // how many rapid retries before new scan
-    const uint16_t  retryDelayMs    = 300;
+    const uint16_t  retryDelayMs    = 1000;
 
     uint8_t tries = 0;
     while (!connectToServer()) {
