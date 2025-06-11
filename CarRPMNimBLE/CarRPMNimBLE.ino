@@ -5,13 +5,16 @@
 #include "nimconfig.h"
 
 volatile uint16_t latestRPM = 0;   // ❷ global cache for the RPM value
-
+TFT_eSPI tft = TFT_eSPI();  
 void scanEndedCB(NimBLEScanResults results);
-TFT_eSPI tft = TFT_eSPI();     // use default pin-map
+
 
 // Handle to the BLE characteristic we’ll use for I/O
 static NimBLERemoteCharacteristic* elmChr = nullptr;
 static NimBLEAdvertisedDevice* advDevice = nullptr;
+static NimBLERemoteCharacteristic* elmTX = nullptr;  // 0xFFF1 – notifications
+static NimBLERemoteCharacteristic* elmRX = nullptr;  // 0xFFF2 – writes
+
 
 // Simple FPS limiter for display updates
 static uint32_t lastScreenUpdate = 0;
@@ -76,6 +79,27 @@ class AdvertisedDeviceCallbacks : public NimBLEAdvertisedDeviceCallbacks {
 
 /** Notification callback – parse replies */
 void notifyCB(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool) {
+    // 1) Dump raw bytes in hex…
+  Serial.print("Raw notification (len=");
+  Serial.print(len);
+  Serial.print("): ");
+  for (size_t i = 0; i < len; i++) {
+    if (data[i] < 0x10) Serial.print('0');
+    Serial.print(data[i], HEX);
+    Serial.print(' ');
+  }
+  Serial.println();
+
+  // 2) Dump as ASCII so you can see CR/LF or echoes…
+  Serial.print("   As ASCII: \"");
+  for (size_t i = 0; i < len; i++) {
+    char c = (char)data[i];
+    if (isPrintable(c)) Serial.print(c);
+    else if (c=='\r') Serial.print("\\r");
+    else if (c=='\n') Serial.print("\\n");
+    else Serial.print('?');
+  }
+  Serial.println('"');
     char buf[32]; uint8_t j = 0;
     for(size_t i = 0; i < len && j < sizeof(buf)-1; ++i)
         if(isxdigit(data[i]) || data[i] == ' ') buf[j++] = data[i];
@@ -154,6 +178,21 @@ bool connectToServer() {
     }
 
     Serial.println("OBD-II characteristic ready");
+      // ——— ELM327 startup sequence ———
+  static const char* initCmds[] = {
+    "ATZ\r",    // reset
+    "ATE0\r",   // echo off
+    "ATS0\r",   // spaces off
+    "ATH0\r",   // headers off
+    "ATSP0\r"   // auto protocol
+  };
+  for (auto &cmd : initCmds) {
+    Serial.printf("ELM init: %s", cmd);
+    elmChr->writeValue((uint8_t*)cmd, strlen(cmd), false);
+    delay(500);        // give the dongle time to respond and settle
+  }
+  Serial.println("ELM327 init done, now polling RPM");
+
     return true;
 }
 
@@ -168,11 +207,8 @@ void setup() {
     Serial.println("Starting NimBLE Client");
     tft.init();
     tft.setRotation(1);
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextFont(6);
-    tft.drawString("RPM", 160, 20);
+    tft.fillScreen(TFT_BLUE);
+    tft.drawString("RPM mmmm guage", 20, 40);
     NimBLEDevice::init("");
     NimBLEDevice::setSecurityPasskey(1234);
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
@@ -192,6 +228,7 @@ void loop() {
         doConnect = false;
         if(!connectToServer()) {
             Serial.println("Connection attempt failed – restarting scan");
+            delay(1000);
             NimBLEDevice::getScan()->start(scanTime, scanEndedCB);
             return;
         }
@@ -204,11 +241,11 @@ void loop() {
         requestRPM();
     }
 
-    static uint16_t prevRPM = 0;
+    static uint16_t prevRPM = 10;
     if(latestRPM != prevRPM && now - lastScreenUpdate >= screenPeriodMs) {
         prevRPM = latestRPM;
         lastScreenUpdate = now;
-        tft.fillRect(60, 100, 200, 80, TFT_BLACK);
-        tft.drawNumber(prevRPM, 160, 140);
+        //tft.fillRect(60, 100, 200, 80, TFT_BLACK);
+        tft.println(prevRPM);
     }
 }
