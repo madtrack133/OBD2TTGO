@@ -1,8 +1,8 @@
-# OBD2TTGO (LILYGO T-Display-S3 + Generic ELM327 BLE)
+# OBD2TTGO (LILYGO T-Display-S3 + ELM327 BLE)
 
-A simple Arduino sketch that turns a **LILYGO T-Display-S3** into a BLE OBD-II RPM display.
+A  C++ sketch that turns a **LILYGO T-Display-S3** into a BLE OBD-II RPM display.
 
-It scans for a generic ELM327-style BLE adapter, connects over GATT, sends the OBD-II RPM PID (`010C`), and shows live RPM on the built-in screen.
+It scans for a ELM327 BLE adapter, connects over GATT, sends the OBD-II RPM PID (`010C`), and shows live RPM on the built-in screen.
 
 ## Hardware
 
@@ -25,10 +25,11 @@ It scans for a generic ELM327-style BLE adapter, connects over GATT, sends the O
 
 - `CarRPMNimBLE/CarRPMNimBLE.ino` – main sketch (BLE scan/connect, PID request, parse, display)
 - `README.md` – setup and usage guide
+- `nimBLE` - ALternative implementation for better compatability.
 
 ## Arduino IDE setup
 
-1. Install **Arduino IDE 2.x**.
+1. Install **Arduino IDE 2.x** or **Platform IO**.
 2. Install **ESP32 boards by Espressif Systems** in Board Manager.
 3. Select board: **LILYGO T-Display-S3** (or equivalent ESP32-S3 board profile if needed).
 4. Install libraries:
@@ -36,23 +37,6 @@ It scans for a generic ELM327-style BLE adapter, connects over GATT, sends the O
    - `TFT_eSPI`
 5. Open `CarRPMNimBLE/CarRPMNimBLE.ino`.
 
-## TFT_eSPI configuration (important)
-
-`TFT_eSPI` usually needs a correct board/display configuration.
-
-Depending on your install, configure one of these:
-
-- `User_Setup_Select.h` to include the right setup file, or
-- A custom setup matching LILYGO T-Display-S3 pins and driver.
-
-If the screen stays blank or corrupted, this is the first thing to verify.
-
-## Flashing
-
-1. Connect the T-Display-S3 with USB.
-2. Pick the right **Port** in Arduino IDE.
-3. Click **Upload**.
-4. Open Serial Monitor at `115200` baud (optional, for debug logs).
 
 ## Running it in the car
 
@@ -65,8 +49,7 @@ If the screen stays blank or corrupted, this is the first thing to verify.
 
 ### No device found
 
-- Confirm your adapter is **BLE**, not classic Bluetooth-only.
-- Some adapters stop advertising while already connected to a phone app.
+- Confirm your adapter is **BLE**, not classic Bluetooth.
 - Power-cycle the adapter and rescan.
 
 ### Connects but no RPM
@@ -75,17 +58,10 @@ If the screen stays blank or corrupted, this is the first thing to verify.
 - Some adapters require ELM initialization commands (`ATZ`, `ATE0`, etc.) before PID queries.
 - Check raw replies in Serial Monitor.
 
-### Screen issues
-
-- Re-check `TFT_eSPI` configuration for T-Display-S3.
 
 ## Next improvements
 
-- Add other PIDs (speed `010D`, coolant temp `0105`, etc.)
+- Add other PIDs (speed `010D`, coolant temp `0105`
 - Add reconnect/backoff logic and better status UI
 - Add adapter profile options for alternate UUID layouts
 - Add startup ELM initialization sequence for broader adapter compatibility
-
-## License
-
-MIT. See `LICENSE`.
